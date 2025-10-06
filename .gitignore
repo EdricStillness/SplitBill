@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Builds and caches
+dist/
+build/
+.expo/
+.expo-shared/
+.parcel-cache/
+.turbo/
+.cache/
+coverage/
+
+# TypeScript
+*.tsbuildinfo
+
+# Expo/React Native
+android/
+ios/
+web-build/
+*.keystore
+*.jks
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# VSCode
+.vscode/**
+!.vscode/extensions.json

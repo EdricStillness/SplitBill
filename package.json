@@ -1,0 +1,14 @@
+{
+  "name": "split-bill-tracking",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/mobile",
+    "apps/api"
+  ],
+  "scripts": {
+    "dev:mobile": "cd apps/mobile && npm start",
+    "dev:api": "cd apps/api && npm run dev",
+    "typecheck": "tsc -b || true"
+  }
+}
