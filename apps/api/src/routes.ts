@@ -7,7 +7,7 @@ import { generateGroupPdf } from "./pdf";
 const r = express.Router();
 
 // In-memory store (replace with DB later)
-const store: Stores = { groups: {}, expenses: {}, settlements: {} };
+const store: Stores = { groups: {}, expenses: {}, settlements: {}, inviteCodes: {} };
 
 // Schemas
 const currency = z.enum(["VND", "AUD", "USD"]);
@@ -86,9 +86,34 @@ r.get("/groups", (_req, res) => {
 r.post("/groups/:id/invite", (req, res, next) => {
 	try {
 		const g = assertGroupExists(req.params.id);
-		const code = `INV-${g.id.slice(-4)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
-		res.json({ code, link: `${req.protocol}://${req.get("host")}/join/${code}` });
+		// Generate or reuse invite code
+		if (!g.inviteCode) {
+			const code = `INV-${g.id.slice(-4)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+			g.inviteCode = code;
+			store.inviteCodes[code] = g.id;
+		}
+		res.json({ code: g.inviteCode, link: `${req.protocol}://${req.get("host")}/join/${g.inviteCode}` });
 	} catch (e) {
+		next(e);
+	}
+});
+
+// Join group by invite code
+r.post("/groups/join/:code", (req, res, next) => {
+	try {
+		const code = req.params.code.toUpperCase();
+		const groupId = store.inviteCodes[code];
+		if (!groupId) throw httpError(404, "Invalid invite code");
+		const g = assertGroupExists(groupId);
+		const memberSchema = z.object({ id: z.string(), name: z.string().min(1), phone: z.string().optional() });
+		const body = memberSchema.parse(req.body);
+		// Check if member already exists
+		if (!g.members.find(m => m.id === body.id)) {
+			g.members.push(body as Member);
+		}
+		res.json(g);
+	} catch (e: any) {
+		if (e instanceof z.ZodError) return res.status(400).json({ error: e.flatten() });
 		next(e);
 	}
 });
@@ -188,11 +213,93 @@ r.post("/settlements", (req, res, next) => {
 	}
 });
 
-// TODO: implement proper upload; for now echo the provided URL
+// Upload receipt (base64 or URL)
 r.post("/upload", (req, res) => {
-	const url = (req.body && (req.body.url as string)) || "";
-	if (!url) return res.status(400).json({ error: "url required" });
-	res.json({ url });
+	try {
+		const { base64, filename } = req.body;
+		if (!base64 && !req.body.url) return res.status(400).json({ error: "base64 or url required" });
+		
+		if (base64) {
+			// In production, upload to S3/CDN. For now, return a mock URL
+			const id = `receipt_${Date.now().toString(36)}`;
+			const url = `https://storage.example.com/receipts/${id}_${filename || 'receipt.jpg'}`;
+			res.json({ url });
+		} else {
+			res.json({ url: req.body.url });
+		}
+	} catch (e) {
+		res.status(500).json({ error: "Upload failed" });
+	}
+});
+
+// Get exchange rates
+r.get("/exchange-rates", async (req, res) => {
+	try {
+		const { base = "USD" } = req.query;
+		// Mock rates - in production, use real API like exchangerate-api.com
+		const rates: Record<string, Record<string, number>> = {
+			USD: { VND: 24000, AUD: 1.5, USD: 1 },
+			VND: { USD: 1/24000, AUD: 1.5/24000, VND: 1 },
+			AUD: { USD: 1/1.5, VND: 24000/1.5, AUD: 1 }
+		};
+		res.json({ base, rates: rates[base as string] || rates.USD, date: new Date().toISOString() });
+	} catch (e) {
+		res.status(500).json({ error: "Failed to fetch rates" });
+	}
+});
+
+// Sync endpoint for offline-first
+r.post("/sync", (req, res, next) => {
+	try {
+		const { groups, expenses, settlements, lastSyncedAt } = req.body;
+		const now = new Date().toISOString();
+		
+		// Merge incoming data
+		if (groups) {
+			groups.forEach((g: Group) => {
+				if (!store.groups[g.id] || (g.lastSyncedAt && g.lastSyncedAt > (store.groups[g.id]?.lastSyncedAt || ''))) {
+					store.groups[g.id] = { ...g, lastSyncedAt: now };
+					if (g.inviteCode) store.inviteCodes[g.inviteCode] = g.id;
+				}
+			});
+		}
+		
+		if (expenses) {
+			Object.entries(expenses).forEach(([groupId, exps]) => {
+				if (!store.expenses[groupId]) store.expenses[groupId] = [];
+				(exps as Expense[]).forEach((e: Expense) => {
+					const idx = store.expenses[groupId]!.findIndex(x => x.id === e.id);
+					if (idx === -1) store.expenses[groupId]!.push(e);
+					else store.expenses[groupId]![idx] = e;
+				});
+			});
+		}
+		
+		if (settlements) {
+			Object.entries(settlements).forEach(([groupId, sets]) => {
+				if (!store.settlements[groupId]) store.settlements[groupId] = [];
+				(sets as Settlement[]).forEach((s: Settlement) => {
+					const idx = store.settlements[groupId]!.findIndex(x => x.id === s.id);
+					if (idx === -1) store.settlements[groupId]!.push(s);
+					else store.settlements[groupId]![idx] = s;
+				});
+			});
+		}
+		
+		// Return updates since lastSyncedAt
+		const updatedGroups = Object.values(store.groups).filter(g => 
+			!lastSyncedAt || (g.lastSyncedAt && g.lastSyncedAt > lastSyncedAt)
+		);
+		
+		res.json({
+			groups: updatedGroups,
+			expenses: store.expenses,
+			settlements: store.settlements,
+			lastSyncedAt: now
+		});
+	} catch (e) {
+		next(e);
+	}
 });
 
 // Export group summary as PDF

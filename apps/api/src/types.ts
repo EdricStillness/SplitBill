@@ -12,6 +12,8 @@ export interface Group {
 	currency: Currency;
 	members: Member[];
 	createdAt: string; // ISO string
+	inviteCode?: string;
+	lastSyncedAt?: string;
 }
 
 export interface ExpenseShare {
@@ -50,4 +52,12 @@ export interface Stores {
 	groups: Record<string, Group>;
 	expenses: Record<string, Expense[]>; // by groupId
 	settlements: Record<string, Settlement[]>; // by groupId
+	inviteCodes: Record<string, string>; // code -> groupId
+}
+
+export interface SyncPayload {
+	groups?: Group[];
+	expenses?: Record<string, Expense[]>;
+	settlements?: Record<string, Settlement[]>;
+	lastSyncedAt: string;
 }
